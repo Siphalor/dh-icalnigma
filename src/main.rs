@@ -55,9 +55,9 @@ fn process<R, W>(input_stream: &mut R, output: &mut W) -> Result<(), util::Error
 
     let document = dom.document;
 
-    write!(output, "BEGIN:VCALENDAR\r\n");
-    write!(output, "VERSION:2.0\r\n");
-    write!(output, "PRODID:-//Siphalor//DHiCalnigma//DE\r\n");
+    write!(output, "BEGIN:VCALENDAR\r\n").ok();
+    write!(output, "VERSION:2.0\r\n").ok();
+    write!(output, "PRODID:-//Siphalor//DHiCalnigma//DE\r\n").ok();
 
     let html = document.get_node_by_tag_name("html").expect("Document does not have an html tag!");
     let body = html.get_node_by_tag_name("body").expect("Document does not have a body tag!");
@@ -69,7 +69,7 @@ fn process<R, W>(input_stream: &mut R, output: &mut W) -> Result<(), util::Error
         }
     }
 
-    write!(output, "END:VCALENDAR\r\n");
+    write!(output, "END:VCALENDAR\r\n").ok();
 
     Ok(())
 }
@@ -162,38 +162,60 @@ fn process_event<W>(event_handle: Handle, output: &mut W) -> Result<(), Error> w
         day: begin.day()
     };
 
-    write!(output, "BEGIN:VEVENT\r\n");
+    write!(output, "BEGIN:VEVENT\r\n").ok();
     let mut hasher = DefaultHasher::new();
     event_hash.hash(&mut hasher);
-    write!(output, "UID:{}@mosbach.dhbw.de\r\n", hasher.finish());
-    write!(output, "DTSTAMP:{}00Z\r\n", creation.format("%Y%m%dT%H%M"));
-    write!(output, "DTSTART:{}00Z\r\n", begin.format("%Y%m%dT%H%M"));
-    write!(output, "DTEND:{}00Z\r\n", end.format("%Y%m%dT%H%M"));
+    write!(output, "UID:{}@mosbach.dhbw.de\r\n", hasher.finish()).ok();
+    write!(output, "DTSTAMP:{}00Z\r\n", creation.format("%Y%m%dT%H%M")).ok();
+    write!(output, "DTSTART:{}00Z\r\n", begin.format("%Y%m%dT%H%M")).ok();
+    write!(output, "DTEND:{}00Z\r\n", end.format("%Y%m%dT%H%M")).ok();
 
     if let Some(summary) = metadata.get("Veranstaltungsname").or_else(|| metadata.get("Titel")) {
         if let Some(event_type) = metadata.get("Veranstaltungsart") {
-            write!(output, "SUMMARY:{} - {}\r\n", summary, event_type);
+            if !event_type.is_empty() {
+                write!(output, "SUMMARY:{} - {}\r\n", summary, event_type).ok();
+            } else {
+                write!(output, "SUMMARY:{}\r\n", summary).ok();
+            }
         } else {
-            write!(output, "SUMMARY:{}\r\n", summary);
+            write!(output, "SUMMARY:{}\r\n", summary).ok();
         }
     }
+
+    let mut description = String::new();
 
     if let Some(resources) = metadata.get("Ressourcen") {
         // Ressourcen = <Kurs>,Raum
-        if let Some((_, room)) = resources.split_once(",") {
-            write!(output, "LOCATION:{}\r\n", room);
+        if let Some((group, room)) = resources.split_once(",") {
+            write!(output, "ATTENDEE:{}\r\n", group).ok();
+            write!(output, "LOCATION:{}\r\n", room).ok();
         }
     }
 
-    if let Some(organizer) = metadata.get("Personen") {
-        write!(output, "ORGANIZER:{}\r\n", organizer);
-    }
-
     if let Some(category) = metadata.get("Veranstaltungskategorie") {
-        write!(output, "DESCRIPTION:{}\r\n", category);
+        description.push_str(category.as_str());
+        description.push_str("\\n\\n");
     }
 
-    write!(output, "END:VEVENT\r\n");
+    if let Some(organizer) = metadata.get("Personen") {
+        description.push_str(format!("Dozent: {}\\n", organizer).as_str());
+        write!(output, "ORGANIZER:{}\r\n", organizer).ok();
+        write!(output, "ATTENDEE:{}\r\n", organizer).ok();
+    }
+
+    if let Some(lang) = metadata.get("Sprache") {
+        description.push_str(format!("Sprache: {}\\n", lang).as_str());
+    }
+
+    if let Some(total_hours) = metadata.get("Soll-Stunden") {
+        description.push_str(format!("Insgesamte Stunden: {}\\n", total_hours).as_str());
+    }
+
+    if !description.is_empty() {
+        write!(output, "DESCRIPTION:{}\r\n", description).ok();
+    }
+
+    write!(output, "END:VEVENT\r\n").ok();
     Ok(())
 }
 
