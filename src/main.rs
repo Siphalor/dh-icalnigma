@@ -20,17 +20,24 @@ fn main() {
     let args: Vec<String> = env::args().collect();
     if let Some(html_file_name) = args.get(1) {
         let mut file = File::open(html_file_name).expect("Not a valid file given");
-        if let Err(e) = process(&mut file) {
-            eprintln!("An error occured: {:?}", e);
+        if let Some(out_file_name) = args.get(2) {
+            let mut out_file = File::open(out_file_name).expect("Output file could not be opened");
+            process_captured(&mut file, &mut out_file);
+        } else {
+            process_captured(&mut file, &mut io::stdout());
         }
     } else {
-        if let Err(e) = process(&mut io::stdin()) {
-            eprintln!("An error occured: {:?}", e);
-        }
+        process_captured(&mut io::stdin(), &mut io::stdout());
     }
 }
 
-fn process<R>(input_stream: &mut R) -> Result<(), util::Error> where R: io::Read {
+fn process_captured<R, W>(input_stream: &mut R, output_stream: &mut W) where R: io::Read, W: io::Write {
+    if let Err(e) = process(input_stream, output_stream) {
+        eprintln!("An error occured: {:?}", e);
+    }
+}
+
+fn process<R, W>(input_stream: &mut R, output: &mut W) -> Result<(), util::Error> where R: io::Read, W: io::Write {
     let mut input_stream = DecodeReaderBytesBuilder::new()
         .encoding(Some(encoding_rs::WINDOWS_1252))
         .build(input_stream);
@@ -43,26 +50,26 @@ fn process<R>(input_stream: &mut R) -> Result<(), util::Error> where R: io::Read
 
     let document = dom.document;
 
-    println!("BEGIN:VCALENDAR");
-    println!("VERSION:2.0");
-    println!("PRODID:-//Siphalor//DHiCalnigma//DE");
+    write!(output, "BEGIN:VCALENDAR\r\n");
+    write!(output, "VERSION:2.0\r\n");
+    write!(output, "PRODID:-//Siphalor//DHiCalnigma//DE\r\n");
 
     let html = document.get_node_by_tag_name("html").expect("Document does not have an html tag!");
     let body = html.get_node_by_tag_name("body").expect("Document does not have a body tag!");
     for handle in body.get_nodes_by_tag_name("div") {
         if let Some(val) = handle.get_attribute_value("class") {
             if val == "calendar" {
-                process_month(handle)?;
+                process_month(handle, output)?;
             }
         }
     }
 
-    println!("END:VCALENDAR");
+    write!(output, "END:VCALENDAR\r\n");
 
     Ok(())
 }
 
-fn process_month(month_handle: Handle) -> Result<(), util::Error> {
+fn process_month<W>(month_handle: Handle, output: &mut W) -> Result<(), util::Error> where W: io::Write {
     if let Some(table_handle) = month_handle.get_node_by_tag_name("table") {
         if let Some(tbody_handle) = table_handle.get_node_by_tag_name("tbody") {
             for row_handle in tbody_handle.get_nodes_by_tag_name("tr") {
@@ -71,7 +78,7 @@ fn process_month(month_handle: Handle) -> Result<(), util::Error> {
                         continue;
                     }
 
-                    if let Err(e) = process_day(cell_handle) {
+                    if let Err(e) = process_day(cell_handle, output) {
                         eprintln!("Error in day: {:?}", e);
                     }
                 }
@@ -82,7 +89,7 @@ fn process_month(month_handle: Handle) -> Result<(), util::Error> {
     Ok(())
 }
 
-fn process_day(cell_handle: Handle) -> Result<(), Error> {
+fn process_day<W>(cell_handle: Handle, output: &mut W) -> Result<(), Error> where W: io::Write {
     let divs = cell_handle.get_nodes_by_tag_name("div");
     if divs.len() < 2 { // The first div is always contains the number of the day
         return Ok(());
@@ -97,7 +104,7 @@ fn process_day(cell_handle: Handle) -> Result<(), Error> {
             continue;
         }
 
-        if let Err(e) = process_event(div) {
+        if let Err(e) = process_event(div, output) {
             eprintln!("Error in event: {:?}", e);
         }
     }
@@ -105,7 +112,7 @@ fn process_day(cell_handle: Handle) -> Result<(), Error> {
     Ok(())
 }
 
-fn process_event(event_handle: Handle) -> Result<(), Error> {
+fn process_event<W>(event_handle: Handle, output: &mut W) -> Result<(), Error> where W: io::Write {
     let link_handle = event_handle.get_node_by_tag_name("a").ok_or("No containing link in event!")?;
     let tooltip_handle = link_handle.get_node_by_tag_name("span").ok_or("No tooltip in event!")?;
     let metadata_handle = tooltip_handle.get_node_by_tag_name("table").ok_or("No event metadata found!")?;
@@ -150,38 +157,38 @@ fn process_event(event_handle: Handle) -> Result<(), Error> {
         day: begin.day()
     };
 
-    println!("BEGIN:VEVENT");
+    write!(output, "BEGIN:VEVENT\r\n");
     let mut hasher = DefaultHasher::new();
     event_hash.hash(&mut hasher);
-    println!("UID:{}@mosbach.dhbw.de", hasher.finish());
-    println!("DTSTAMP:{}00Z", creation.format("%Y%m%dT%H%M"));
-    println!("DTSTART:{}00Z", begin.format("%Y%m%dT%H%M"));
-    println!("DTEND:{}00Z", end.format("%Y%m%dT%H%M"));
+    write!(output, "UID:{}@mosbach.dhbw.de\r\n", hasher.finish());
+    write!(output, "DTSTAMP:{}00Z\r\n", creation.format("%Y%m%dT%H%M"));
+    write!(output, "DTSTART:{}00Z\r\n", begin.format("%Y%m%dT%H%M"));
+    write!(output, "DTEND:{}00Z\r\n", end.format("%Y%m%dT%H%M"));
 
     if let Some(summary) = metadata.get("Veranstaltungsname").or_else(|| metadata.get("Titel")) {
         if let Some(event_type) = metadata.get("Veranstaltungsart") {
-            println!("SUMMARY:{} - {}", summary, event_type);
+            write!(output, "SUMMARY:{} - {}\r\n", summary, event_type);
         } else {
-            println!("SUMMARY:{}", summary);
+            write!(output, "SUMMARY:{}\r\n", summary);
         }
     }
 
     if let Some(resources) = metadata.get("Ressourcen") {
         // Ressourcen = <Kurs>,Raum
         if let Some((_, room)) = resources.split_once(",") {
-            println!("LOCATION:{}", room);
+            write!(output, "LOCATION:{}\r\n", room);
         }
     }
 
     if let Some(organizer) = metadata.get("Personen") {
-        println!("ORGANIZER:{}", organizer);
+        write!(output, "ORGANIZER:{}\r\n", organizer);
     }
 
     if let Some(category) = metadata.get("Veranstaltungskategorie") {
-        println!("DESCRIPTION:{}", category);
+        write!(output, "DESCRIPTION:{}\r\n", category);
     }
 
-    println!("END:VEVENT");
+    write!(output, "END:VEVENT\r\n");
     Ok(())
 }
 
