@@ -1,7 +1,7 @@
 use std::{env, io};
 use std::collections::hash_map::DefaultHasher;
 use std::collections::HashMap;
-use std::fs::File;
+use std::fs::{File, OpenOptions};
 use std::hash::{Hash, Hasher};
 use std::option::Option::Some;
 
@@ -21,7 +21,12 @@ fn main() {
     if let Some(html_file_name) = args.get(1) {
         let mut file = File::open(html_file_name).expect("Not a valid file given");
         if let Some(out_file_name) = args.get(2) {
-            let mut out_file = File::open(out_file_name).expect("Output file could not be opened");
+            let mut out_file = OpenOptions::new()
+                .read(false)
+                .write(true)
+                .truncate(true)
+                .create(true)
+                .open(out_file_name).expect("Output file could not be opened");
             process_captured(&mut file, &mut out_file);
         } else {
             process_captured(&mut file, &mut io::stdout());
