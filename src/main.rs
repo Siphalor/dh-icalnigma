@@ -135,7 +135,8 @@ fn process_event<W>(event_handle: Handle, output: &mut W) -> Result<(), Error> w
     }
     let creation_text = cc_text.split_at(14).0;
     let creation = Berlin.datetime_from_str(creation_text, "%d.%m.%y%H:%M")
-        .map_err(|err| format!("Failed to parse begin time of event: {:?}", err))?;
+        .map_err(|err| format!("Failed to parse begin time of event: {:?}", err))?
+        .with_timezone(&chrono_tz::UTC);
 
     // Parse begin and end
     let date_time_text = tooltip_divs.get(1).unwrap().get_content().ok_or("Missing datetime in event!")?;
@@ -146,9 +147,11 @@ fn process_event<W>(event_handle: Handle, output: &mut W) -> Result<(), Error> w
     let end_time = date_time_split.next().ok_or("No end time in event datetime!")?;
 
     let begin = Berlin.datetime_from_str(format!("{}{}", date, begin_time).as_str(), "%d.%m.%y%H:%M")
-        .map_err(|err| format!("Failed to parse begin time of event: {:?}", err))?;
+        .map_err(|err| format!("Failed to parse begin time of event: {:?}", err))?
+        .with_timezone(&chrono_tz::UTC);
     let end = Berlin.datetime_from_str(format!("{}{}", date, end_time).as_str(), "%d.%m.%y%H:%M")
-        .map_err(|err| format!("Failed to parse end time of event: {:?}", err))?;
+        .map_err(|err| format!("Failed to parse end time of event: {:?}", err))?
+        .with_timezone(&chrono_tz::UTC);
 
     // Parse metadata
     let metadata = parse_metadata(metadata_handle);
@@ -181,10 +184,12 @@ fn process_event<W>(event_handle: Handle, output: &mut W) -> Result<(), Error> w
     let mut description = String::new();
 
     if let Some(resources) = metadata.get("Ressourcen") {
-        // Ressourcen = <Kurs>,Raum
-        if let Some((group, room)) = resources.split_once(",") {
-            write!(output, "ATTENDEE:{}\r\n", group).ok();
+        // Ressourcen = <Kurse>,Raum
+        if let Some((groups, room)) = resources.rsplit_once(",") {
             write!(output, "LOCATION:{}\r\n", room).ok();
+            for group in groups.split(",") {
+                write!(output, "ATTENDEE;CN={}:noreply@mosbach.dhbw.de\r\n", group).ok();
+            }
         }
     }
 
@@ -195,8 +200,8 @@ fn process_event<W>(event_handle: Handle, output: &mut W) -> Result<(), Error> w
 
     if let Some(organizer) = metadata.get("Personen") {
         description.push_str(format!("Dozent: {}\\n", organizer).as_str());
-        write!(output, "ORGANIZER:{}\r\n", organizer).ok();
-        write!(output, "ATTENDEE:{}\r\n", organizer).ok();
+        write!(output, "ORGANIZER;CN={}:noreply@mosbach.dhbw.de\r\n", organizer).ok();
+        write!(output, "ATTENDEE;CN={}:noreply@mosbach.dhbw.de\r\n", organizer).ok();
     }
 
     if let Some(lang) = metadata.get("Sprache") {
