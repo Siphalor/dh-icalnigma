@@ -5,7 +5,7 @@ use std::fs::{File, OpenOptions};
 use std::hash::{Hash, Hasher};
 use std::option::Option::Some;
 
-use chrono::{Datelike, TimeZone};
+use chrono::{Datelike, TimeZone, Utc};
 use chrono_tz::Europe::Berlin;
 use encoding_rs_io::{DecodeReaderBytesBuilder};
 use html5ever::ParseOpts;
@@ -58,6 +58,7 @@ fn process<R, W>(input_stream: &mut R, output: &mut W) -> Result<(), util::Error
     write!(output, "BEGIN:VCALENDAR\r\n").ok();
     write!(output, "VERSION:2.0\r\n").ok();
     write!(output, "PRODID:-//Siphalor//DHiCalnigma//DE\r\n").ok();
+    write!(output, "X-LAST-UPDATED:{}\r\n", Utc::now().with_timezone(&Berlin).format("%d.%m.%Y %H:%M")).ok();
 
     let html = document.get_node_by_tag_name("html").expect("Document does not have an html tag!");
     let body = html.get_node_by_tag_name("body").expect("Document does not have a body tag!");
