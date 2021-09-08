@@ -172,11 +172,7 @@ fn process_event<W>(event_handle: Handle, output: &mut W) -> Result<(), Error> w
 
     if let Some(summary) = metadata.get("Veranstaltungsname").or_else(|| metadata.get("Titel")) {
         if let Some(event_type) = metadata.get("Veranstaltungsart") {
-            if !event_type.is_empty() {
-                write!(output, "SUMMARY:{} - {}\r\n", summary, event_type).ok();
-            } else {
-                write!(output, "SUMMARY:{}\r\n", summary).ok();
-            }
+            write!(output, "SUMMARY:{} - {}\r\n", summary, event_type).ok();
         } else {
             write!(output, "SUMMARY:{}\r\n", summary).ok();
         }
@@ -236,8 +232,12 @@ fn parse_metadata(metadata_handle: Handle) -> HashMap<String, String> {
                     }
                 })
                 .unwrap_or_else(String::new);
-            let value = cells.get(1).unwrap().get_content().unwrap_or_else(String::new);
-            metadata.insert(key, value);
+            if let Some(value) = cells.get(1).unwrap().get_content() {
+                if value.is_empty() {
+                    continue;
+                }
+                metadata.insert(key, value);
+            }
         }
     }
     metadata
