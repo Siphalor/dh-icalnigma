@@ -1,0 +1,10 @@
+# IntelliJ
+.idea/
+*.iml
+
+# Cargo/Rust
+target/
+
+# Test data
+*.html
+*.ics
