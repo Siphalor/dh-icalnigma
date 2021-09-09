@@ -12,7 +12,7 @@ use html5ever::ParseOpts;
 use html5ever::tendril::TendrilSink;
 use markup5ever_rcdom::{Handle, RcDom};
 
-use crate::util::{Error, EventHash, HandleExtensions, write_ical_field};
+use crate::util::{Error, EventHash, HandleExtensions, write_ical_field, write_ical_line};
 
 mod util;
 
@@ -189,7 +189,7 @@ fn process_event<W>(event_handle: Handle, output: &mut W) -> Result<(), Error> w
         if let Some((groups, room)) = resources.rsplit_once(",") {
             write_ical_field(output, "LOCATION", room);
             for group in groups.split(",") {
-                write!(output, "ATTENDEE;CN={}:noreply@mosbach.dhbw.de\r\n", group).ok();
+                write_ical_line(output, format!(r#"ATTENDEE;CN="{}":noreply@mosbach.dhbw.de"#, group).as_str());
             }
         }
     }
@@ -201,8 +201,8 @@ fn process_event<W>(event_handle: Handle, output: &mut W) -> Result<(), Error> w
 
     if let Some(organizer) = metadata.get("Personen") {
         description.push_str(format!("Dozent: {}\\n", organizer).as_str());
-        write!(output, "ORGANIZER;CN={}:noreply@mosbach.dhbw.de\r\n", organizer).ok();
-        write!(output, "ATTENDEE;CN={}:noreply@mosbach.dhbw.de\r\n", organizer).ok();
+        write_ical_line(output, format!(r#"ORGANIZER;CN="{}":noreply@mosbach.dhbw.de"#, organizer).as_str());
+        write_ical_line(output, format!(r#"ATTENDEE;CN="{}":noreply@mosbach.dhbw.de"#, organizer).as_str());
     }
 
     if let Some(lang) = metadata.get("Sprache") {

@@ -11,7 +11,11 @@ pub fn write_ical_field<W, K, V>(output: &mut W, key: K, value: V)
     let key = key.into();
     let value = value.into().replace(",", "\\,");
     let line = format!("{}:{}", &key, &value);
-    let mut line_rest: &str = line.as_str();
+    write_ical_line(output, line.as_str());
+}
+
+pub fn write_ical_line<W>(output: &mut W, line: &str) where W: io::Write {
+    let mut line_rest = line;
 
     let mut first = true;
     let mut current_line_length = 0;
