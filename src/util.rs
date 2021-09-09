@@ -4,6 +4,38 @@ use markup5ever_rcdom::Handle;
 use markup5ever_rcdom::NodeData;
 use crate::util::Error::Custom;
 use std::fmt::Debug;
+use std::io;
+
+pub fn write_ical_field<W, K, V>(output: &mut W, key: K, value: V)
+    where W: io::Write, K: Into<String>, V: Into<String> {
+    let key = key.into();
+    let value = value.into().replace(",", "\\,");
+    let line = format!("{}:{}", &key, &value);
+    let mut line_rest: &str = line.as_str();
+
+    let mut first = true;
+    let mut current_line_length = 0;
+    while !line_rest.is_empty() {
+        for line_char in line_rest.chars() {
+            current_line_length += line_char.len_utf8();
+            if current_line_length > 72 {
+                current_line_length -= line_char.len_utf8();
+                break;
+            }
+        }
+
+        let parts = line_rest.split_at(current_line_length);
+        line_rest = parts.1;
+        current_line_length = 0;
+
+        if first {
+            write!(output, "{}\r\n", parts.0).ok();
+            first = false;
+        } else {
+            write!(output, " {}\r\n", parts.0).ok();
+        }
+    }
+}
 
 pub trait HandleExtensions {
     fn check_attribute(self, attribute_name: &str, attribute_value: &str) -> Result<Handle, Error>;

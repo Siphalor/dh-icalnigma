@@ -12,7 +12,7 @@ use html5ever::ParseOpts;
 use html5ever::tendril::TendrilSink;
 use markup5ever_rcdom::{Handle, RcDom};
 
-use crate::util::{Error, EventHash, HandleExtensions};
+use crate::util::{Error, EventHash, HandleExtensions, write_ical_field};
 
 mod util;
 
@@ -58,7 +58,7 @@ fn process<R, W>(input_stream: &mut R, output: &mut W) -> Result<(), util::Error
     write!(output, "BEGIN:VCALENDAR\r\n").ok();
     write!(output, "VERSION:2.0\r\n").ok();
     write!(output, "PRODID:-//Siphalor//DHiCalnigma//DE\r\n").ok();
-    write!(output, "X-LAST-UPDATED:{}\r\n", Utc::now().with_timezone(&Berlin).format("%d.%m.%Y %H:%M")).ok();
+    write!(output, "X-ICALNIGMA-TIME:{}\r\n", Utc::now().with_timezone(&Berlin).format("%d.%m.%Y %H:%M")).ok();
 
     let html = document.get_node_by_tag_name("html").expect("Document does not have an html tag!");
     let body = html.get_node_by_tag_name("body").expect("Document does not have a body tag!");
@@ -169,16 +169,16 @@ fn process_event<W>(event_handle: Handle, output: &mut W) -> Result<(), Error> w
     write!(output, "BEGIN:VEVENT\r\n").ok();
     let mut hasher = DefaultHasher::new();
     event_hash.hash(&mut hasher);
-    write!(output, "UID:{}@mosbach.dhbw.de\r\n", hasher.finish()).ok();
+    write_ical_field(output, "UID", format!("{}@mosbach.dhbw.de", hasher.finish()));
     write!(output, "DTSTAMP:{}00Z\r\n", creation.format("%Y%m%dT%H%M")).ok();
     write!(output, "DTSTART:{}00Z\r\n", begin.format("%Y%m%dT%H%M")).ok();
     write!(output, "DTEND:{}00Z\r\n", end.format("%Y%m%dT%H%M")).ok();
 
     if let Some(summary) = metadata.get("Veranstaltungsname").or_else(|| metadata.get("Titel")) {
         if let Some(event_type) = metadata.get("Veranstaltungsart") {
-            write!(output, "SUMMARY:{} - {}\r\n", summary, event_type).ok();
+            write_ical_field(output, "SUMMARY", format!("{} - {}", summary, event_type));
         } else {
-            write!(output, "SUMMARY:{}\r\n", summary).ok();
+            write_ical_field(output, "SUMMARY", summary);
         }
     }
 
@@ -187,7 +187,7 @@ fn process_event<W>(event_handle: Handle, output: &mut W) -> Result<(), Error> w
     if let Some(resources) = metadata.get("Ressourcen") {
         // Ressourcen = <Kurse>,Raum
         if let Some((groups, room)) = resources.rsplit_once(",") {
-            write!(output, "LOCATION:{}\r\n", room).ok();
+            write_ical_field(output, "LOCATION", room);
             for group in groups.split(",") {
                 write!(output, "ATTENDEE;CN={}:noreply@mosbach.dhbw.de\r\n", group).ok();
             }
@@ -214,7 +214,7 @@ fn process_event<W>(event_handle: Handle, output: &mut W) -> Result<(), Error> w
     }
 
     if !description.is_empty() {
-        write!(output, "DESCRIPTION:{}\r\n", description).ok();
+        write_ical_field(output, "DESCRIPTION", description);
     }
 
     write!(output, "END:VEVENT\r\n").ok();
