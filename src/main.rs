@@ -7,10 +7,12 @@ use std::option::Option::Some;
 
 use chrono::{Datelike, TimeZone, Utc};
 use chrono_tz::Europe::Berlin;
-use encoding_rs_io::{DecodeReaderBytesBuilder};
+use encoding_rs_io::DecodeReaderBytesBuilder;
 use html5ever::ParseOpts;
 use html5ever::tendril::TendrilSink;
+use lazy_static::lazy_static;
 use markup5ever_rcdom::{Handle, RcDom};
+use regex::Regex;
 
 use crate::util::{Error, EventHash, HandleExtensions, write_ical_field, write_ical_line};
 
@@ -163,7 +165,7 @@ fn process_event<W>(event_handle: Handle, output: &mut W) -> Result<(), Error> w
         event_id: metadata.get("Veranstaltungsnummer"),
         year: begin.year(),
         month: begin.month(),
-        day: begin.day()
+        day: begin.day(),
     };
 
     write!(output, "BEGIN:VEVENT\r\n").ok();
@@ -174,7 +176,10 @@ fn process_event<W>(event_handle: Handle, output: &mut W) -> Result<(), Error> w
     write!(output, "DTSTART:{}00Z\r\n", begin.format("%Y%m%dT%H%M")).ok();
     write!(output, "DTEND:{}00Z\r\n", end.format("%Y%m%dT%H%M")).ok();
 
-    if let Some(summary) = metadata.get("Veranstaltungsname").or_else(|| metadata.get("Titel")) {
+    if let Some(summary) = metadata.get("Veranstaltungsname")
+        .or_else(|| metadata.get("Titel"))
+        .or_else(|| metadata.get("Name"))
+    {
         if let Some(event_type) = metadata.get("Veranstaltungsart") {
             write_ical_field(output, "SUMMARY", format!("{} - {}", summary, event_type));
         } else {
@@ -184,13 +189,27 @@ fn process_event<W>(event_handle: Handle, output: &mut W) -> Result<(), Error> w
 
     let mut description = String::new();
 
+    // Resources are a comma-separated list, that begins with groups and ends with locations
     if let Some(resources) = metadata.get("Ressourcen") {
-        // Ressourcen = <Kurse>,Raum
-        if let Some((groups, room)) = resources.rsplit_once(",") {
-            write_ical_field(output, "LOCATION", room);
-            for group in groups.split(",") {
-                write_ical_line(output, format!(r#"ATTENDEE;CN="{}":noreply@mosbach.dhbw.de"#, group).as_str());
+        let res_split = resources.split(",");
+        lazy_static! {
+                static ref GROUP_PATTERN: Regex = Regex::new(r"^[A-Z]{3}-[A-Z0-9 ]+$").unwrap();
             }
+        let mut groups: Vec<&str> = Vec::new();
+        let mut rooms: Vec<&str> = Vec::new();
+
+        for resource in res_split {
+            if GROUP_PATTERN.is_match(resource) {
+                groups.push(resource);
+            } else {
+                rooms.push(resource);
+            }
+        }
+        if !rooms.is_empty() {
+            write_ical_field(output, "LOCATION", rooms.join(", "));
+        }
+        for group in groups {
+            write_ical_line(output, format!(r#"ATTENDEE;CN="{}":noreply@mosbach.dhbw.de"#, group).as_str());
         }
     }
 
