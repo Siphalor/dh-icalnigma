@@ -7,6 +7,7 @@ use std::option::Option::Some;
 
 use chrono::{Datelike, TimeZone, Utc};
 use chrono_tz::Europe::Berlin;
+use clap::Parser;
 use encoding_rs_io::DecodeReaderBytesBuilder;
 use html5ever::ParseOpts;
 use html5ever::tendril::TendrilSink;
@@ -18,29 +19,47 @@ use crate::util::{Error, EventHash, HandleExtensions, write_ical_field, write_ic
 
 mod util;
 
+#[derive(Parser)]
+#[clap(
+    version = "0.2",
+    author = "Siphalor <info@siphalor.de>",
+    rename_all = "kebab",
+    about = "An unofficial program that transpiles Rapla HTML sites to iCalendar files.",
+)]
+struct Opts {
+    /// The HTML file to read in
+    #[clap(required)]
+    input: String,
+
+    /// The output file
+    #[clap(required)]
+    output: String,
+}
+
 fn main() {
-    let args: Vec<String> = env::args().collect();
-    if let Some(html_file_name) = args.get(1) {
-        let mut file = File::open(html_file_name).expect("Not a valid file given");
-        if let Some(out_file_name) = args.get(2) {
-            let mut out_file = OpenOptions::new()
-                .read(false)
-                .write(true)
-                .truncate(true)
-                .create(true)
-                .open(out_file_name).expect("Output file could not be opened");
-            process_captured(&mut file, &mut out_file);
-        } else {
-            process_captured(&mut file, &mut io::stdout());
+    let opts: Opts = Opts::parse();
+
+    match File::open(opts.input) {
+        Ok(mut input_file) => {
+
+            match OpenOptions::new().read(false).write(true).truncate(true).create(true).open(opts.output) {
+                Ok(mut output_file) => {
+                    process_captured(&mut input_file, &mut output_file);
+                }
+                Err(error) => {
+                    eprintln!("Failed to open output file: {}", error);
+                }
+            }
         }
-    } else {
-        process_captured(&mut io::stdin(), &mut io::stdout());
+        Err(error) => {
+            eprintln!("Failed to open input file: {}", error);
+        }
     }
 }
 
 fn process_captured<R, W>(input_stream: &mut R, output_stream: &mut W) where R: io::Read, W: io::Write {
-    if let Err(e) = process(input_stream, output_stream) {
-        eprintln!("An error occured: {:?}", e);
+    if let Err(error) = process(input_stream, output_stream) {
+        eprintln!("An error occurred: {:?}", error);
     }
 }
 
