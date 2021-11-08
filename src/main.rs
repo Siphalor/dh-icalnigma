@@ -1,11 +1,9 @@
-use std::{env, io};
-use std::collections::hash_map::DefaultHasher;
+use std::io;
 use std::collections::HashMap;
 use std::fs::{File, OpenOptions};
-use std::hash::{Hash, Hasher};
 use std::option::Option::Some;
 
-use chrono::{Datelike, TimeZone, Utc};
+use chrono::{TimeZone, Utc};
 use chrono_tz::Europe::Berlin;
 use clap::Parser;
 use encoding_rs_io::DecodeReaderBytesBuilder;
@@ -15,9 +13,13 @@ use lazy_static::lazy_static;
 use markup5ever_rcdom::{Handle, RcDom};
 use regex::Regex;
 
-use crate::util::{Error, EventHash, HandleExtensions, write_ical_field, write_ical_line};
+use crate::icalendar::write_calendar;
+use crate::model::{Event, EventData};
+use crate::util::{Error, HandleExtensions};
 
 mod util;
+mod model;
+mod icalendar;
 
 #[derive(Parser)]
 #[clap(
@@ -28,11 +30,11 @@ mod util;
 )]
 struct Opts {
     /// The HTML file to read in
-    #[clap(required)]
+    #[clap(required=true)]
     input: String,
 
     /// The output file
-    #[clap(required)]
+    #[clap(required=true)]
     output: String,
 }
 
@@ -75,28 +77,26 @@ fn process<R, W>(input_stream: &mut R, output: &mut W) -> Result<(), util::Error
         .expect("Failed to parse input!");
 
     let document = dom.document;
-
-    write!(output, "BEGIN:VCALENDAR\r\n").ok();
-    write!(output, "VERSION:2.0\r\n").ok();
-    write!(output, "PRODID:-//Siphalor//DHiCalnigma//DE\r\n").ok();
-    write!(output, "X-ICALNIGMA-TIME:{}\r\n", Utc::now().with_timezone(&Berlin).format("%d.%m.%Y %H:%M")).ok();
-
     let html = document.get_node_by_tag_name("html").expect("Document does not have an html tag!");
     let body = html.get_node_by_tag_name("body").expect("Document does not have a body tag!");
+
+    let mut events = Vec::new();
     for handle in body.get_nodes_by_tag_name("div") {
         if let Some(val) = handle.get_attribute_value("class") {
             if val == "calendar" {
-                process_month(handle, output)?;
+                events.extend(process_month(handle)?);
             }
         }
     }
 
-    write!(output, "END:VCALENDAR\r\n").ok();
+    write_calendar(output, &events);
 
     Ok(())
 }
 
-fn process_month<W>(month_handle: Handle, output: &mut W) -> Result<(), util::Error> where W: io::Write {
+fn process_month(month_handle: Handle) -> Result<Vec<Event>, util::Error> {
+    let mut events = Vec::new();
+
     if let Some(table_handle) = month_handle.get_node_by_tag_name("table") {
         if let Some(tbody_handle) = table_handle.get_node_by_tag_name("tbody") {
             for row_handle in tbody_handle.get_nodes_by_tag_name("tr") {
@@ -105,43 +105,52 @@ fn process_month<W>(month_handle: Handle, output: &mut W) -> Result<(), util::Er
                         continue;
                     }
 
-                    if let Err(e) = process_day(cell_handle, output) {
-                        eprintln!("Error in day: {:?}", e);
+                    match process_day(cell_handle) {
+                        Ok(day_events) => {
+                            if let Some(day_events) = day_events {
+                                events.extend(day_events)
+                            }
+                        },
+                        Err(error) => eprintln!("Error in day: {:?}", error),
                     }
                 }
             }
         }
     }
 
-    Ok(())
+    Ok(events)
 }
 
-fn process_day<W>(cell_handle: Handle, output: &mut W) -> Result<(), Error> where W: io::Write {
+fn process_day(cell_handle: Handle) -> Result<Option<Vec<Event>>, Error> {
     let divs = cell_handle.get_nodes_by_tag_name("div");
     if divs.len() < 2 { // The first div is always contains the number of the day
-        return Ok(());
+        return Ok(None);
     }
 
     let mut divs = divs.into_iter();
     divs.next();
 
+    let mut events = Vec::with_capacity(divs.len());
     for div in divs {
         if div.get_attribute_value("class").map_or(true, |val| val != "month_block") {
             eprintln!("Skipping potential event, class={:?}, content={:?}", div.get_attribute_value("class"), div.get_content());
             continue;
         }
 
-        if let Err(e) = process_event(div, output) {
-            eprintln!("Error in event: {:?}", e);
+        match process_event(div) {
+            Ok(event) => events.push(event),
+            Err(error) => eprintln!("Error in event: {:?}", error),
         }
     }
 
-    Ok(())
+    Ok(Some(events))
 }
 
-fn process_event<W>(event_handle: Handle, output: &mut W) -> Result<(), Error> where W: io::Write {
+fn process_event(event_handle: Handle) -> Result<Event, Error> {
     let link_handle = event_handle.get_node_by_tag_name("a").ok_or("No containing link in event!")?;
     let tooltip_handle = link_handle.get_node_by_tag_name("span").ok_or("No tooltip in event!")?;
+    let event_type_handle = tooltip_handle.get_node_by_tag_name("strong").ok_or("Could not identify event type!")?;
+    let event_type_raw = event_type_handle.get_content().unwrap_or_else(String::new);
     let metadata_handle = tooltip_handle.get_node_by_tag_name("table").ok_or("No event metadata found!")?;
 
     let tooltip_divs = tooltip_handle.get_nodes_by_tag_name("div");
@@ -158,7 +167,7 @@ fn process_event<W>(event_handle: Handle, output: &mut W) -> Result<(), Error> w
     let creation_text = cc_text.split_at(14).0;
     let creation = Berlin.datetime_from_str(creation_text, "%d.%m.%y%H:%M")
         .map_err(|err| format!("Failed to parse begin time of event: {:?}", err))?
-        .with_timezone(&chrono_tz::UTC);
+        .with_timezone(&Utc);
 
     // Parse begin and end
     let date_time_text = tooltip_divs.get(1).unwrap().get_content().ok_or("Missing datetime in event!")?;
@@ -170,43 +179,16 @@ fn process_event<W>(event_handle: Handle, output: &mut W) -> Result<(), Error> w
 
     let begin = Berlin.datetime_from_str(format!("{}{}", date, begin_time).as_str(), "%d.%m.%y%H:%M")
         .map_err(|err| format!("Failed to parse begin time of event: {:?}", err))?
-        .with_timezone(&chrono_tz::UTC);
+        .with_timezone(&Utc);
     let end = Berlin.datetime_from_str(format!("{}{}", date, end_time).as_str(), "%d.%m.%y%H:%M")
         .map_err(|err| format!("Failed to parse end time of event: {:?}", err))?
-        .with_timezone(&chrono_tz::UTC);
+        .with_timezone(&Utc);
 
     // Parse metadata
     let metadata = parse_metadata(metadata_handle);
 
-    let event_hash = EventHash {
-        creation_time: creation.timestamp(),
-        creator: metadata.get("reserviert von"),
-        event_id: metadata.get("Veranstaltungsnummer"),
-        year: begin.year(),
-        month: begin.month(),
-        day: begin.day(),
-    };
-
-    write!(output, "BEGIN:VEVENT\r\n").ok();
-    let mut hasher = DefaultHasher::new();
-    event_hash.hash(&mut hasher);
-    write_ical_field(output, "UID", format!("{}@mosbach.dhbw.de", hasher.finish()));
-    write!(output, "DTSTAMP:{}00Z\r\n", creation.format("%Y%m%dT%H%M")).ok();
-    write!(output, "DTSTART:{}00Z\r\n", begin.format("%Y%m%dT%H%M")).ok();
-    write!(output, "DTEND:{}00Z\r\n", end.format("%Y%m%dT%H%M")).ok();
-
-    if let Some(summary) = metadata.get("Veranstaltungsname")
-        .or_else(|| metadata.get("Titel"))
-        .or_else(|| metadata.get("Name"))
-    {
-        if let Some(event_type) = metadata.get("Veranstaltungsart") {
-            write_ical_field(output, "SUMMARY", format!("{} - {}", summary, event_type));
-        } else {
-            write_ical_field(output, "SUMMARY", summary);
-        }
-    }
-
-    let mut description = String::new();
+    let mut courses: Vec<String> = Vec::new();
+    let mut locations: Vec<String> = Vec::new();
 
     // Resources are a comma-separated list, that begins with groups and ends with locations
     if let Some(resources) = metadata.get("Ressourcen") {
@@ -214,49 +196,49 @@ fn process_event<W>(event_handle: Handle, output: &mut W) -> Result<(), Error> w
         lazy_static! {
                 static ref GROUP_PATTERN: Regex = Regex::new(r"^[A-Z]{3}-[A-Z0-9 ]+$").unwrap();
             }
-        let mut groups: Vec<&str> = Vec::new();
-        let mut rooms: Vec<&str> = Vec::new();
 
         for resource in res_split {
             if GROUP_PATTERN.is_match(resource) {
-                groups.push(resource);
+                courses.push(resource.to_string());
             } else {
-                rooms.push(resource);
+                locations.push(resource.to_string());
             }
         }
-        if !rooms.is_empty() {
-            write_ical_field(output, "LOCATION", rooms.join(", "));
+    }
+
+    let event = Event {
+        creation,
+        creator: metadata.get("reserviert von").map(|val| val.clone()),
+        begin,
+        end,
+        name: metadata.get("Veranstaltungsname")
+            .or_else(|| metadata.get("Titel"))
+            .or_else(|| metadata.get("Name"))
+            .map_or_else(String::new, |val| val.clone()),
+        lecturers: vec![],
+        locations,
+        courses,
+        data: match event_type_raw.as_str() {
+            "Lehrveranstaltung" => {
+                EventData::Lecture {
+                    number: metadata.get("Veranstaltungsnummer").map_or_else(String::new, |val| val.clone()),
+                    language: metadata.get("Sprache").map(|val| val.clone()),
+                    kind: metadata.get("Veranstaltungsart").map(|val| val.clone()),
+                    categories: metadata.get("Veranstaltungskategorie").map_or_else(
+                        Vec::new,
+                        |categories| categories.split(",").map(|val| String::from(val.trim())).collect()
+                    ),
+                    total_hours: metadata.get("Soll-Stunden").and_then(|val| val.parse().ok()),
+                }
+            },
+            "Prüfung" => EventData::Exam,
+            "Sonstiger Termin" => EventData::Other,
+            _ => {
+                return Err(format!("Failed to resolve event type: {}", event_type_raw).into());
+            },
         }
-        for group in groups {
-            write_ical_line(output, format!(r#"ATTENDEE;CN="{}":noreply@mosbach.dhbw.de"#, group).as_str());
-        }
-    }
-
-    if let Some(category) = metadata.get("Veranstaltungskategorie") {
-        description.push_str(category.as_str());
-        description.push_str("\\n\\n");
-    }
-
-    if let Some(organizer) = metadata.get("Personen") {
-        description.push_str(format!("Dozent: {}\\n", organizer).as_str());
-        write_ical_line(output, format!(r#"ORGANIZER;CN="{}":noreply@mosbach.dhbw.de"#, organizer).as_str());
-        write_ical_line(output, format!(r#"ATTENDEE;CN="{}":noreply@mosbach.dhbw.de"#, organizer).as_str());
-    }
-
-    if let Some(lang) = metadata.get("Sprache") {
-        description.push_str(format!("Sprache: {}\\n", lang).as_str());
-    }
-
-    if let Some(total_hours) = metadata.get("Soll-Stunden") {
-        description.push_str(format!("Insgesamte Stunden: {}\\n", total_hours).as_str());
-    }
-
-    if !description.is_empty() {
-        write_ical_field(output, "DESCRIPTION", description);
-    }
-
-    write!(output, "END:VEVENT\r\n").ok();
-    Ok(())
+    };
+    Ok(event)
 }
 
 fn parse_metadata(metadata_handle: Handle) -> HashMap<String, String> {
