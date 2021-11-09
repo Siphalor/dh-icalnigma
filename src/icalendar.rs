@@ -15,6 +15,7 @@ pub fn write_calendar<W: io::Write>(write: &mut W, events: &Vec<Event>) {
     for event in events {
         write_lecture(write, event);
     }
+    write!(write, "END:VCALENDAR\r\n").ok();
 }
 
 pub fn write_lecture<W: io::Write>(write: &mut W, event: &Event) {
