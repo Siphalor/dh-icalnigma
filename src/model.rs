@@ -1,8 +1,13 @@
+use serde::{Deserialize, Serialize};
+use std::collections::BTreeMap;
 use std::collections::hash_map::DefaultHasher;
 use std::fmt::{Display, Formatter};
 use std::hash::{Hash, Hasher};
 use chrono::{Datelike, DateTime, Utc};
 
+pub type Months = BTreeMap<String, Vec<Event>>;
+
+#[derive(Deserialize, Serialize)]
 pub struct Event {
     pub creation: DateTime<Utc>,
     pub creator: Option<String>,
@@ -16,6 +21,7 @@ pub struct Event {
     pub data: EventData,
 }
 
+#[derive(Deserialize, Serialize)]
 pub enum EventData {
     Lecture {
         /// The event number in Rapla - not unique on its own!
@@ -33,6 +39,7 @@ pub enum EventData {
     Other,
 }
 
+#[derive(Deserialize, Serialize)]
 pub struct Lecturer {
     first_name: String,
     surname: String,

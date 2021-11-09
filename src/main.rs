@@ -12,14 +12,16 @@ use html5ever::tendril::TendrilSink;
 use lazy_static::lazy_static;
 use markup5ever_rcdom::{Handle, RcDom};
 use regex::Regex;
+use crate::archive::{read_archive, write_archive};
 
 use crate::icalendar::write_calendar;
-use crate::model::{Event, EventData};
+use crate::model::{Event, EventData, Months};
 use crate::util::{Error, HandleExtensions};
 
 mod util;
 mod model;
 mod icalendar;
+mod archive;
 
 #[derive(Parser)]
 #[clap(
@@ -57,9 +59,23 @@ fn main() {
                         return;
                     }
 
-                    let mut events = res.unwrap();
+                    let mut months = res.unwrap();
 
-                    write_calendar(&mut output_file, &events);
+                    if let Some(archive_path) = &opts.archive {
+                        match read_archive(archive_path) {
+                            Ok(mut archive_months) => {
+                                archive_months.extend(months);
+                                months = archive_months;
+                            }
+                            Err(error) => eprintln!("Failed to read archive: {}", error),
+                        }
+
+                        if let Err(error) = write_archive(archive_path, &months) {
+                            eprintln!("Failed to write archive: {}", error);
+                        }
+                    }
+
+                    write_calendar(&mut output_file, &months.into_values().flatten().collect());
                 }
                 Err(error) => {
                     eprintln!("Failed to open output file: {}", error);
@@ -72,7 +88,7 @@ fn main() {
     }
 }
 
-fn load_events<R: io::Read>(input_stream: &mut R) -> Result<Vec<Event>, util::Error> {
+fn load_events<R: io::Read>(input_stream: &mut R) -> Result<Months, util::Error> {
     let mut input_stream = DecodeReaderBytesBuilder::new()
         .encoding(Some(encoding_rs::WINDOWS_1252))
         .build(input_stream);
@@ -87,19 +103,21 @@ fn load_events<R: io::Read>(input_stream: &mut R) -> Result<Vec<Event>, util::Er
     let html = document.get_node_by_tag_name("html").expect("Document does not have an html tag!");
     let body = html.get_node_by_tag_name("body").expect("Document does not have a body tag!");
 
-    let mut events = Vec::new();
+    let mut months = Months::new();
     for handle in body.get_nodes_by_tag_name("div") {
         if let Some(val) = handle.get_attribute_value("class") {
             if val == "calendar" {
-                events.extend(load_month(handle)?);
+                if let Some((month, events)) = load_month(handle)? {
+                    months.insert(month, events);
+                }
             }
         }
     }
 
-    Ok(events)
+    Ok(months)
 }
 
-fn load_month(month_handle: Handle) -> Result<Vec<Event>, util::Error> {
+fn load_month(month_handle: Handle) -> Result<Option<(String, Vec<Event>)>, util::Error> {
     let mut events = Vec::new();
 
     if let Some(table_handle) = month_handle.get_node_by_tag_name("table") {
@@ -123,7 +141,10 @@ fn load_month(month_handle: Handle) -> Result<Vec<Event>, util::Error> {
         }
     }
 
-    Ok(events)
+    if events.is_empty() {
+        return Ok(None)
+    }
+    return Ok(Some(( events.first().unwrap().end.format("%Y%m").to_string(), events )))
 }
 
 fn load_day(cell_handle: Handle) -> Result<Option<Vec<Event>>, Error> {
