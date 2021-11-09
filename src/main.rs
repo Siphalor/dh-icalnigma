@@ -25,7 +25,7 @@ mod archive;
 
 #[derive(Parser)]
 #[clap(
-    version = "0.3",
+    version = "0.3.1",
     author = "Siphalor <info@siphalor.de>",
     rename_all = "kebab",
     about = "An unofficial program that transpiles Rapla HTML sites to iCalendar files.",

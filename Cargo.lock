@@ -97,7 +97,7 @@ dependencies = [
 
 [[package]]
 name = "dh_icalnigma"
-version = "0.1.0"
+version = "0.3.1"
 dependencies = [
  "chrono",
  "chrono-tz",
