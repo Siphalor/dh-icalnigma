@@ -49,14 +49,14 @@ pub fn write_lecture<W: io::Write>(write: &mut W, event: &Event) {
     }
 
     if !event.lecturers.is_empty() {
-        write_ical_line(write, format!(r#"ORGANIZER;CN="{}":noreply@siphalor.de"#, event.lecturers.first().unwrap()).as_str());
+        write_ical_line(write, format!(r#"ORGANIZER;CN="{}":noreply@siphalor.de"#, event.lecturers.first().unwrap().name).as_str());
 
         write!(
             description, "Dozent:innen: {}\\n",
-            event.lecturers.iter().map(|l| l.to_string()).collect::<Vec<String>>().join(", ")
+            event.lecturers.iter().map(|l| l.name.as_str()).collect::<Vec<&str>>().join(", ")
         ).ok();
         for lecturer in &event.lecturers {
-            write_ical_line(write, format!(r#"ATTENDEE;CN="{}":noreply@siphalor.de"#, lecturer).as_str());
+            write_ical_line(write, format!(r#"ATTENDEE;CN="{}":noreply@siphalor.de"#, lecturer.name).as_str());
         }
     }
 

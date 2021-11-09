@@ -15,7 +15,7 @@ use regex::Regex;
 use crate::archive::{read_archive, write_archive};
 
 use crate::icalendar::write_calendar;
-use crate::model::{Event, EventData, Months};
+use crate::model::{Event, EventData, Lecturer, Months};
 use crate::util::{Error, HandleExtensions};
 
 mod util;
@@ -213,6 +213,11 @@ fn process_event(event_handle: Handle) -> Result<Event, Error> {
     // Parse metadata
     let metadata = parse_metadata(metadata_handle);
 
+    let mut lecturers = Vec::new();
+    if let Some(persons_string) = metadata.get("Personen") {
+        lecturers = persons_string.split(',').map(|name| Lecturer{name: String::from(name)}).collect();
+    }
+
     let mut courses: Vec<String> = Vec::new();
     let mut locations: Vec<String> = Vec::new();
 
@@ -241,7 +246,7 @@ fn process_event(event_handle: Handle) -> Result<Event, Error> {
             .or_else(|| metadata.get("Titel"))
             .or_else(|| metadata.get("Name"))
             .map_or_else(String::new, |val| val.clone()),
-        lecturers: vec![],
+        lecturers,
         locations,
         courses,
         data: match event_type_raw.as_str() {

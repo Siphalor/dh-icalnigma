@@ -1,7 +1,6 @@
 use serde::{Deserialize, Serialize};
 use std::collections::BTreeMap;
 use std::collections::hash_map::DefaultHasher;
-use std::fmt::{Display, Formatter};
 use std::hash::{Hash, Hasher};
 use chrono::{Datelike, DateTime, Utc};
 
@@ -41,8 +40,7 @@ pub enum EventData {
 
 #[derive(Deserialize, Serialize)]
 pub struct Lecturer {
-    first_name: String,
-    surname: String,
+    pub name: String,
 }
 
 impl Event {
@@ -78,11 +76,5 @@ impl Event {
             }
         }
         return self.name.clone();
-    }
-}
-
-impl Display for Lecturer {
-    fn fmt(&self, f: &mut Formatter<'_>) -> std::fmt::Result {
-        write!(f, "{} {}", self.first_name, self.surname)
     }
 }
