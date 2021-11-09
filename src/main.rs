@@ -36,6 +36,10 @@ struct Opts {
     /// The output file
     #[clap(required=true)]
     output: String,
+
+    /// Sets the archive file and enables archiving
+    #[clap(short, long)]
+    archive: Option<String>,
 }
 
 fn main() {
@@ -46,7 +50,16 @@ fn main() {
 
             match OpenOptions::new().read(false).write(true).truncate(true).create(true).open(opts.output) {
                 Ok(mut output_file) => {
-                    process_captured(&mut input_file, &mut output_file);
+                    let res = load_events(&mut input_file);
+
+                    if let Err(error) = res {
+                        eprintln!("Failed to load events from file: {:?}", error);
+                        return;
+                    }
+
+                    let mut events = res.unwrap();
+
+                    write_calendar(&mut output_file, &events);
                 }
                 Err(error) => {
                     eprintln!("Failed to open output file: {}", error);
@@ -59,13 +72,7 @@ fn main() {
     }
 }
 
-fn process_captured<R, W>(input_stream: &mut R, output_stream: &mut W) where R: io::Read, W: io::Write {
-    if let Err(error) = process(input_stream, output_stream) {
-        eprintln!("An error occurred: {:?}", error);
-    }
-}
-
-fn process<R, W>(input_stream: &mut R, output: &mut W) -> Result<(), util::Error> where R: io::Read, W: io::Write {
+fn load_events<R: io::Read>(input_stream: &mut R) -> Result<Vec<Event>, util::Error> {
     let mut input_stream = DecodeReaderBytesBuilder::new()
         .encoding(Some(encoding_rs::WINDOWS_1252))
         .build(input_stream);
@@ -84,17 +91,15 @@ fn process<R, W>(input_stream: &mut R, output: &mut W) -> Result<(), util::Error
     for handle in body.get_nodes_by_tag_name("div") {
         if let Some(val) = handle.get_attribute_value("class") {
             if val == "calendar" {
-                events.extend(process_month(handle)?);
+                events.extend(load_month(handle)?);
             }
         }
     }
 
-    write_calendar(output, &events);
-
-    Ok(())
+    Ok(events)
 }
 
-fn process_month(month_handle: Handle) -> Result<Vec<Event>, util::Error> {
+fn load_month(month_handle: Handle) -> Result<Vec<Event>, util::Error> {
     let mut events = Vec::new();
 
     if let Some(table_handle) = month_handle.get_node_by_tag_name("table") {
@@ -105,7 +110,7 @@ fn process_month(month_handle: Handle) -> Result<Vec<Event>, util::Error> {
                         continue;
                     }
 
-                    match process_day(cell_handle) {
+                    match load_day(cell_handle) {
                         Ok(day_events) => {
                             if let Some(day_events) = day_events {
                                 events.extend(day_events)
@@ -121,7 +126,7 @@ fn process_month(month_handle: Handle) -> Result<Vec<Event>, util::Error> {
     Ok(events)
 }
 
-fn process_day(cell_handle: Handle) -> Result<Option<Vec<Event>>, Error> {
+fn load_day(cell_handle: Handle) -> Result<Option<Vec<Event>>, Error> {
     let divs = cell_handle.get_nodes_by_tag_name("div");
     if divs.len() < 2 { // The first div is always contains the number of the day
         return Ok(None);
