@@ -1,6 +1,6 @@
 use std::io;
-use std::collections::HashMap;
 use std::fs::{File, OpenOptions};
+use std::num::ParseIntError;
 use std::option::Option::Some;
 
 use chrono::{TimeZone, Utc};
@@ -15,8 +15,8 @@ use regex::Regex;
 use crate::archive::{read_archive, write_archive};
 
 use crate::icalendar::write_calendar;
-use crate::model::{Event, EventData, Lecturer, Months};
-use crate::util::{Error, HandleExtensions};
+use crate::model::{Event, EventData, Months};
+use crate::util::{Day, Error, get_month_from_german, HandleExtensions, Month, Year};
 
 mod util;
 mod model;
@@ -120,21 +120,30 @@ fn load_events<R: io::Read>(input_stream: &mut R) -> Result<Months, util::Error>
 fn load_month(month_handle: Handle) -> Result<Option<(String, Vec<Event>)>, util::Error> {
     let mut events = Vec::new();
 
-    if let Some(table_handle) = month_handle.get_node_by_tag_name("table") {
-        if let Some(tbody_handle) = table_handle.get_node_by_tag_name("tbody") {
-            for row_handle in tbody_handle.get_nodes_by_tag_name("tr") {
-                for cell_handle in row_handle.get_nodes_by_tag_name("td") {
-                    if cell_handle.get_attribute_value("class").map_or(true, |val| val != "month_cell") {
-                        continue;
-                    }
+    if let Some(heading_handle) = month_handle.get_node_by_tag_name("h2") {
+        if let Some(heading_text) = heading_handle.get_content() {
+            let mut parts = heading_text.split_ascii_whitespace();
+            let month: Month = get_month_from_german(parts.next().ok_or("Invalid month heading text (empty)")?)?;
+            let year: Year = parts.next().ok_or("Invalid month heading text (year is missing!)")?
+                .parse().map_err(|err: ParseIntError| err.to_string())?;
 
-                    match load_day(cell_handle) {
-                        Ok(day_events) => {
-                            if let Some(day_events) = day_events {
-                                events.extend(day_events)
+            if let Some(table_handle) = month_handle.get_node_by_tag_name("table") {
+                if let Some(tbody_handle) = table_handle.get_node_by_tag_name("tbody") {
+                    for row_handle in tbody_handle.get_nodes_by_tag_name("tr") {
+                        for cell_handle in row_handle.get_nodes_by_tag_name("td") {
+                            if cell_handle.get_attribute_value("class").map_or(true, |val| val != "month_cell") {
+                                continue;
                             }
-                        },
-                        Err(error) => eprintln!("Error in day: {:?}", error),
+
+                            match load_day(cell_handle, year, month) {
+                                Ok(day_events) => {
+                                    if let Some(day_events) = day_events {
+                                        events.extend(day_events)
+                                    }
+                                },
+                                Err(error) => eprintln!("Error in day: {:?}", error),
+                            }
+                        }
                     }
                 }
             }
@@ -147,14 +156,16 @@ fn load_month(month_handle: Handle) -> Result<Option<(String, Vec<Event>)>, util
     return Ok(Some(( events.first().unwrap().end.format("%Y%m").to_string(), events )))
 }
 
-fn load_day(cell_handle: Handle) -> Result<Option<Vec<Event>>, Error> {
+fn load_day(cell_handle: Handle, year: Year, month: Month) -> Result<Option<Vec<Event>>, Error> {
     let divs = cell_handle.get_nodes_by_tag_name("div");
-    if divs.len() < 2 { // The first div is always contains the number of the day
+    if divs.len() < 2 { // The first div always contains the number of the day
         return Ok(None);
     }
 
     let mut divs = divs.into_iter();
-    divs.next();
+    let day: Day = divs.next().unwrap().get_content()
+        .ok_or("No day number found!")?
+        .parse().map_err(|err| format!("Failed to parse day number: {}", err))?;
 
     let mut events = Vec::with_capacity(divs.len());
     for div in divs {
@@ -163,7 +174,7 @@ fn load_day(cell_handle: Handle) -> Result<Option<Vec<Event>>, Error> {
             continue;
         }
 
-        match process_event(div) {
+        match process_event(div, year, month, day) {
             Ok(event) => events.push(event),
             Err(error) => eprintln!("Error in event: {:?}", error),
         }
@@ -172,130 +183,58 @@ fn load_day(cell_handle: Handle) -> Result<Option<Vec<Event>>, Error> {
     Ok(Some(events))
 }
 
-fn process_event(event_handle: Handle) -> Result<Event, Error> {
+fn process_event(event_handle: Handle, year: Year, month: Month, day: Day) -> Result<Event, Error> {
     let link_handle = event_handle.get_node_by_tag_name("a").ok_or("No containing link in event!")?;
-    let tooltip_handle = link_handle.get_node_by_tag_name("span").ok_or("No tooltip in event!")?;
-    let event_type_handle = tooltip_handle.get_node_by_tag_name("strong").ok_or("Could not identify event type!")?;
-    let event_type_raw = event_type_handle.get_content().unwrap_or_else(String::new);
-    let metadata_handle = tooltip_handle.get_node_by_tag_name("table").ok_or("No event metadata found!")?;
+    let mut title_lines = link_handle.get_text_nodes().into_iter();
 
-    let tooltip_divs = tooltip_handle.get_nodes_by_tag_name("div");
-    if tooltip_divs.len() < 2 {
-        return Err("Missing metadata on event!".into());
-    }
-
-    // Parse creation/changed info
-    let cc_text = tooltip_divs.get(0).unwrap().get_content().ok_or("No creation/changed time found for event!")?;
-    let cc_text = cc_text.trim_start().strip_prefix("erstellt am").ok_or("No creation prefix found for event!")?;
-    if cc_text.len() < 14 {
-        return Err(format!("Invalid creation text on event: {}", cc_text).into());
-    }
-    let creation_text = cc_text.split_at(14).0;
-    let creation = Berlin.datetime_from_str(creation_text, "%d.%m.%y%H:%M")
-        .map_err(|err| format!("Failed to parse begin time of event: {:?}", err))?
-        .with_timezone(&Utc);
-
-    // Parse begin and end
-    let date_time_text = tooltip_divs.get(1).unwrap().get_content().ok_or("Missing datetime in event!")?;
-    let mut date_time_split = date_time_text.split(&[' ', '-'][..]);
-    date_time_split.next(); // Discard day of week
-    let date = date_time_split.next().ok_or("No date in event datetime!")?;
-    let begin_time = date_time_split.next().ok_or("No begin time in event datetime!")?;
-    let end_time = date_time_split.next().ok_or("No end time in event datetime!")?;
-
-    let begin = Berlin.datetime_from_str(format!("{}{}", date, begin_time).as_str(), "%d.%m.%y%H:%M")
-        .map_err(|err| format!("Failed to parse begin time of event: {:?}", err))?
-        .with_timezone(&Utc);
-    let end = Berlin.datetime_from_str(format!("{}{}", date, end_time).as_str(), "%d.%m.%y%H:%M")
-        .map_err(|err| format!("Failed to parse end time of event: {:?}", err))?
-        .with_timezone(&Utc);
-
-    // Parse metadata
-    let metadata = parse_metadata(metadata_handle);
-
-    let mut lecturers = Vec::new();
-    if let Some(persons_string) = metadata.get("Personen") {
-        lecturers = persons_string.split(',').map(|name| Lecturer{name: String::from(name)}).collect();
-    }
-
-    let mut courses: Vec<String> = Vec::new();
-    let mut locations: Vec<String> = Vec::new();
-
-    // Resources are a comma-separated list, that begins with groups and ends with locations
-    if let Some(resources) = metadata.get("Ressourcen") {
-        let res_split = resources.split(",");
-        lazy_static! {
-                static ref GROUP_PATTERN: Regex = Regex::new(r"^[A-Z]{3}-[A-Z0-9 ]+$").unwrap();
-            }
-
-        for resource in res_split {
-            if GROUP_PATTERN.is_match(resource) {
-                courses.push(resource.to_string());
-            } else {
-                locations.push(resource.to_string());
-            }
+    if let Some(metadata_line) = title_lines.next() {
+        lazy_static!{
+            static ref TIME_PATTERN: Regex = Regex::new(r"^(\d{1,2}):(\d{1,2})\s*-\s*(\d{1,2}):(\d{1,2})").unwrap();
         }
-    }
+        if let Some(captures) = TIME_PATTERN.captures(metadata_line.as_str()) {
+            let metadata_rest: &str = &metadata_line[captures.get(0).unwrap().end()..];
+            let date: chrono::Date<chrono_tz::Tz> = Berlin.ymd(year, month, day);
+            let begin = date.and_hms(
+                captures.get(1).unwrap().as_str().parse().unwrap(),
+                captures.get(2).unwrap().as_str().parse().unwrap(),
+                0
+            ).with_timezone(&Utc);
+            let end = date.and_hms(
+                captures.get(3).unwrap().as_str().parse().unwrap(),
+                captures.get(4).unwrap().as_str().parse().unwrap(),
+                0
+            ).with_timezone(&Utc);
 
-    let event = Event {
-        creation,
-        creator: metadata.get("reserviert von").map(|val| val.clone()),
-        begin,
-        end,
-        name: metadata.get("Veranstaltungsname")
-            .or_else(|| metadata.get("Titel"))
-            .or_else(|| metadata.get("Name"))
-            .map_or_else(String::new, |val| val.clone()),
-        lecturers,
-        locations,
-        courses,
-        data: match event_type_raw.as_str() {
-            "Lehrveranstaltung" => {
-                EventData::Lecture {
-                    number: metadata.get("Veranstaltungsnummer").map_or_else(String::new, |val| val.clone()),
-                    language: metadata.get("Sprache").map(|val| val.clone()),
-                    kind: metadata.get("Veranstaltungsart").map(|val| val.clone()),
-                    categories: metadata.get("Veranstaltungskategorie").map_or_else(
-                        Vec::new,
-                        |categories| categories.split(",").map(|val| String::from(val.trim())).collect()
-                    ),
-                    total_hours: metadata.get("Soll-Stunden").and_then(|val| val.parse().ok()),
+
+            let mut courses: Vec<String> = Vec::new();
+            let mut locations: Vec<String> = Vec::new();
+            for resource in metadata_rest.split(",") {
+                lazy_static! {
+                    static ref COURSE_PATTERN: Regex = Regex::new(r"^[A-Z]{3}-[A-Z0-9 ]+$").unwrap();
                 }
-            },
-            "Prüfung" => EventData::Exam,
-            "Sonstiger Termin" => EventData::Other,
-            _ => {
-                return Err(format!("Failed to resolve event type: {}", event_type_raw).into());
-            },
-        }
-    };
-    Ok(event)
-}
-
-fn parse_metadata(metadata_handle: Handle) -> HashMap<String, String> {
-    let mut metadata = HashMap::new();
-    if let Some(tbody_handle) = metadata_handle.get_node_by_tag_name("tbody") {
-        for row_handle in tbody_handle.get_nodes_by_tag_name("tr") {
-            let cells = row_handle.get_nodes_by_tag_name("td");
-            if cells.len() < 2 {
-                continue;
-            }
-            let key = cells.get(0).unwrap().get_content()
-                .map(|key| {
-                    if let Some(stripped) = key.strip_suffix(":") {
-                        stripped.to_string()
-                    } else {
-                        key
-                    }
-                })
-                .unwrap_or_else(String::new);
-            if let Some(value) = cells.get(1).unwrap().get_content() {
-                if value.is_empty() {
-                    continue;
+                let trimmed = resource.trim();
+                if COURSE_PATTERN.is_match(trimmed) {
+                    courses.push(trimmed.to_string());
+                } else {
+                    locations.push(trimmed.to_string());
                 }
-                metadata.insert(key, value);
-            }
+            };
+
+            Ok(Event {
+                creation: None,
+                creator: None,
+                begin,
+                end,
+                name: title_lines.next().unwrap_or_else(|| "missingno".to_string()),
+                lecturers: vec![],
+                locations,
+                courses,
+                data: EventData::Exam
+            })
+        } else {
+            Err("Failed to parse event metadata!".into())
         }
+    } else {
+        Err("Encountered empty event!".into())
     }
-    metadata
 }

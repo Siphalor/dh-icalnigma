@@ -15,6 +15,7 @@ pub trait HandleExtensions {
     fn get_attribute_value(&self, attribute_name: &str) -> Option<String>;
 
     fn get_content(&self) -> Option<String>;
+    fn get_text_nodes(&self) -> Vec<String>;
 }
 
 impl HandleExtensions for Handle {
@@ -51,7 +52,7 @@ impl HandleExtensions for Handle {
         if let NodeData::Element { attrs, .. } = &self.data {
             for attr in attrs.borrow().deref() {
                 if &attr.name.local == attribute_name {
-                    return Some(attr.value.to_string())
+                    return Some(attr.value.to_string());
                 }
             }
         }
@@ -65,6 +66,38 @@ impl HandleExtensions for Handle {
             }
         };
         None
+    }
+
+    fn get_text_nodes(&self) -> Vec<String> {
+        self.children.borrow().iter()
+            .filter_map(|node| match &node.data {
+                NodeData::Text { contents } => Some(contents.borrow().to_string()),
+                _ => None,
+            }).collect()
+    }
+}
+
+pub type Year = i32;
+pub type Month = u32;
+pub type Day = u32;
+
+pub fn get_month_from_german(text: &str) -> Result<Month, Error> {
+    match text.to_lowercase().as_str() {
+        "januar"    => Ok(1),
+        "februar"   => Ok(2),
+        "märz"      => Ok(3),
+        "april"     => Ok(4),
+        "mai"       => Ok(5),
+        "juni"      => Ok(6),
+        "juli"      => Ok(7),
+        "august"    => Ok(8),
+        "september" => Ok(9),
+        "oktober"   => Ok(10),
+        "november"  => Ok(11),
+        "dezember"  => Ok(12),
+        _ => {
+            Err(format!("Failed to resolve month \"{}\"", text).into())
+        }
     }
 }
 

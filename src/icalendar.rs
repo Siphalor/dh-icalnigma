@@ -22,7 +22,9 @@ pub fn write_lecture<W: io::Write>(write: &mut W, event: &Event) {
 
     write!(write, "BEGIN:VEVENT\r\n").ok();
     write_ical_field(write, "UID", format!("{}@icalnigma", event.hash()));
-    write!(write, "DTSTAMP:{}00Z\r\n", event.creation.format(ICAL_DATETIME_FORMAT)).ok();
+    if let Some(creation) = event.creation {
+        write!(write, "CREATED:{}00Z\r\n", creation.format(ICAL_DATETIME_FORMAT)).ok();
+    }
     write!(write, "DTSTART:{}00Z\r\n", event.begin.format(ICAL_DATETIME_FORMAT)).ok();
     write!(write, "DTEND:{}00Z\r\n", event.end.format(ICAL_DATETIME_FORMAT)).ok();
     write!(write, "SUMMARY:{}\r\n", event.title()).ok();
@@ -58,6 +60,8 @@ pub fn write_lecture<W: io::Write>(write: &mut W, event: &Event) {
         for lecturer in &event.lecturers {
             write_ical_line(write, format!(r#"ATTENDEE;CN="{}":noreply@siphalor.de"#, lecturer.name).as_str());
         }
+    } else {
+        description.push_str("Dozent:innen sind aufgrund von Datenschutzbedenken der DHBW nicht mehr öffentlich!")
     }
 
     for course in &event.courses {

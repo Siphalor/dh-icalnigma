@@ -8,7 +8,7 @@ pub type Months = BTreeMap<String, Vec<Event>>;
 
 #[derive(Deserialize, Serialize)]
 pub struct Event {
-    pub creation: DateTime<Utc>,
+    pub creation: Option<DateTime<Utc>>,
     pub creator: Option<String>,
     pub begin: DateTime<Utc>,
     pub end: DateTime<Utc>,
@@ -38,7 +38,7 @@ pub enum EventData {
     Other,
 }
 
-#[derive(Deserialize, Serialize)]
+#[derive(Deserialize, Serialize, Clone)]
 pub struct Lecturer {
     pub name: String,
 }
@@ -58,7 +58,7 @@ impl Event {
         let mut hasher = DefaultHasher::new();
 
         EventHash {
-            creation_time: self.creation.timestamp(),
+            creation_time: self.creation.map_or(0, |time| time.timestamp()),
             name: &self.name,
             year: self.begin.year(),
             month: self.begin.month(),
