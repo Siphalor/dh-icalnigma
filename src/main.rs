@@ -220,16 +220,23 @@ fn process_event(event_handle: Handle, year: Year, month: Month, day: Day) -> Re
                 }
             };
 
+            let title = title_lines.next().unwrap_or_else(|| "missingno".to_string());
             Ok(Event {
                 creation: None,
                 creator: None,
                 begin,
                 end,
-                name: title_lines.next().unwrap_or_else(|| "missingno".to_string()),
+                data: if title.starts_with("Klausur ") { EventData::Lecture {
+                    number: None,
+                    language: None,
+                    kind: None,
+                    categories: vec![],
+                    total_hours: None
+                } } else { EventData::Exam },
+                name: title,
                 lecturers: vec![],
                 locations,
                 courses,
-                data: EventData::Exam
             })
         } else {
             Err("Failed to parse event metadata!".into())

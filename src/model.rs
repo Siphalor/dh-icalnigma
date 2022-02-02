@@ -24,7 +24,7 @@ pub struct Event {
 pub enum EventData {
     Lecture {
         /// The event number in Rapla - not unique on its own!
-        number: String,
+        number: Option<String>,
         /// The language as loaded from Rapla
         language: Option<String>,
         /// The event kind as loaded from Rapla
