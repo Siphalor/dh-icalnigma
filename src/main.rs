@@ -226,13 +226,19 @@ fn process_event(event_handle: Handle, year: Year, month: Month, day: Day) -> Re
                 creator: None,
                 begin,
                 end,
-                data: if title.starts_with("Klausur ") { EventData::Lecture {
-                    number: None,
-                    language: None,
-                    kind: None,
-                    categories: vec![],
-                    total_hours: None
-                } } else { EventData::Exam },
+                data: if title.starts_with("Klausur ") { EventData::Exam } else {
+                    if locations.is_empty() {
+                        EventData::Other
+                    } else {
+                        EventData::Lecture {
+                            number: None,
+                            language: None,
+                            kind: None,
+                            categories: vec![],
+                            total_hours: None,
+                        }
+                    }
+                },
                 name: title,
                 lecturers: vec![],
                 locations,
