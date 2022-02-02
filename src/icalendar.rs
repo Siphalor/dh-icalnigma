@@ -34,8 +34,11 @@ pub fn write_lecture<W: io::Write>(write: &mut W, event: &Event) {
     }
 
     let mut description = String::new();
+    let mut evt_categories: Vec<&str> = Vec::new();
 
     if let EventData::Lecture{categories, language, total_hours, ..} = &event.data {
+        evt_categories.push("LECTURE");
+
         if !categories.is_empty() {
             write!(description, "{}\\n\\n", categories.join(", ")).ok();
             write_ical_line(write, format!("CATEGORIES:{}", categories.join(",")).as_str());
@@ -48,6 +51,18 @@ pub fn write_lecture<W: io::Write>(write: &mut W, event: &Event) {
         if let Some(total_hours) = total_hours {
             write!(description, "Insgesamte Stunden: {}\\n", total_hours).ok();
         }
+    } else if let EventData::Exam = &event.data {
+        evt_categories.push("EXAM");
+    }
+
+    if event.locations.iter().any(|loc| loc == "Online-Vorlesung") {
+        evt_categories.push("ONLINE");
+    } else if !event.locations.is_empty() {
+        evt_categories.push("PRESENCE");
+    }
+
+    if !evt_categories.is_empty() {
+        write_ical_line(write, format!("CATEGORIES:{}", evt_categories.join(",")).as_str());
     }
 
     if !event.lecturers.is_empty() {
